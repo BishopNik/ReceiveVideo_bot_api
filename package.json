@@ -5,3 +5,9 @@
     "node-telegram-bot-api": "^1.1.0"
   }
 }
+
+{
+  "scripts": {
+    "start": "node bot.js"
+  }
+}
