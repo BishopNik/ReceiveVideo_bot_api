@@ -4,11 +4,14 @@ RUN apt-get update && apt-get install -y \
     ffmpeg \
     python3 \
     python3-pip \
-    curl \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+    python3-full \
+    curl
 
-RUN python3 -m pip install --upgrade pip setuptools wheel
+# гарантируем pip (ВАЖНО)
+RUN python3 -m ensurepip --upgrade || true
+
+RUN python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel
+
 RUN pip3 install yt-dlp
 
 WORKDIR /app
