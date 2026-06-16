@@ -83,8 +83,10 @@ async function processQueue() {
 		// Шаг 1: Просто скачиваем лучшее доступное видео (до 720p для экономии размера)
 		const args = [
 			url,
-			'-S',
-			'res:720,ext:mp4:m4a',
+			'-f',
+			'bestvideo+bestaudio/best',
+			'--merge-output-format',
+			'mkv',
 			'--newline',
 			'--no-part',
 			'--progress',
@@ -94,6 +96,14 @@ async function processQueue() {
 		];
 
 		const child = spawn('yt-dlp', args);
+
+		child.stderr.on('data', data => {
+			console.log('yt-dlp stderr:', data.toString());
+		});
+
+		child.stdout.on('data', data => {
+			console.log('yt-dlp stdout:', data.toString());
+		});
 
 		let lastPercent = '';
 		let lastUpdateTime = 0;
