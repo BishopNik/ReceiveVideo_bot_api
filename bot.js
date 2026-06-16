@@ -227,8 +227,24 @@ async function processQueue() {
 				.catch(() => {});
 
 			try {
+				const probeCmd = `ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 "${absolutePath}"`;
+
+				const dimensions = await new Promise(resolve => {
+					exec(probeCmd, (err, stdout) => {
+						if (err || !stdout) return resolve({ width: undefined, height: undefined });
+						const parts = stdout.trim().split('x');
+						resolve({
+							width: Number(parts[0]),
+							height: Number(parts[1]),
+						});
+					});
+				});
+
 				await bot.sendVideo(chatId, absolutePath, {
 					caption: 'Готово ✅ (оригинальное качество и пропорции сохранены)',
+					width: dimensions.width,
+					height: dimensions.height,
+					supports_streaming: true,
 				});
 				await bot.deleteMessage(chatId, statusMsg.message_id).catch(() => {});
 			} catch (e) {
