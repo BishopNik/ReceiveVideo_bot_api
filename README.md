@@ -18,9 +18,10 @@ git clone https://github.com/BishopNik/ReceiveVideo_bot_api.git
 
 ## Запуск
 
-Щоб запустити проект, виконайте наступну команду:
+Перед запуском установите `ffmpeg` и `yt-dlp`, создайте `.env` с переменной
+`BOT_TOKEN`, затем выполните:
 
-npx ts-node bot.ts
+npm start
 
 Bot ReceiveVideo Клікніть /start
 
