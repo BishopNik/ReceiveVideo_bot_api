@@ -4,21 +4,17 @@ require('dotenv').config();
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const crypto = require('crypto');
 const TelegramBot = require('node-telegram-bot-api');
 const { spawn } = require('child_process');
 const express = require('express');
 
 const app = express();
-
-app.get('/', (req, res) => {
-	res.send('Bot is running');
-});
+app.use(express.json({ limit: '1mb' }));
 
 const PORT = process.env.PORT || 3000;
-
-app.listen(PORT, () => {
-	console.log(`Web server listening on ${PORT}`);
-});
+const WEBHOOK_URL = process.env.WEBHOOK_URL?.replace(/\/$/, '');
+const WEBHOOK_PATH = '/telegram/webhook';
 
 const token = process.env.BOT_TOKEN;
 if (!token) {
@@ -26,12 +22,20 @@ if (!token) {
 	process.exit(1);
 }
 
-const bot = new TelegramBot(token, {
-	polling: {
-		autoStart: true,
-		params: { timeout: 30 },
-	},
-});
+const webhookSecret =
+	process.env.TELEGRAM_WEBHOOK_SECRET ||
+	crypto.createHash('sha256').update(token).digest('hex');
+const bot = new TelegramBot(
+	token,
+	WEBHOOK_URL
+		? {}
+		: {
+			polling: {
+				autoStart: true,
+				params: { timeout: 30 },
+			},
+		}
+);
 console.log('BOT_TOKEN успешно загружен.');
 
 bot.on('polling_error', error => {
@@ -225,7 +229,7 @@ async function processJob({ chatId, url, platform }) {
 			[
 				url,
 				'-f',
-				'bv*[height<=720]+ba/b[height<=720]/best[height<=720]',
+				'bv*[height<=720]+ba/b[height<=720]/best',
 				'--merge-output-format',
 				'mkv',
 				'--newline',
@@ -354,43 +358,133 @@ async function processQueue() {
 	}
 }
 
+function detectPlatform(url) {
+	let parsed;
+	try {
+		parsed = new URL(url);
+	} catch {
+		return { error: 'Это не ссылка' };
+	}
+
+	if (!['http:', 'https:'].includes(parsed.protocol)) {
+		return { error: 'Поддерживаются только HTTP/HTTPS ссылки' };
+	}
+
+	const host = parsed.hostname.toLowerCase();
+	if (host === 'tiktok.com' || host.endsWith('.tiktok.com')) {
+		return { platform: 'tiktok' };
+	}
+	if (host === 'instagram.com' || host.endsWith('.instagram.com')) {
+		return { platform: 'instagram' };
+	}
+	if (
+		host === 'youtube.com' ||
+		host.endsWith('.youtube.com') ||
+		host === 'youtu.be'
+	) {
+		return { platform: 'youtube' };
+	}
+	return { error: 'Поддерживаются только TikTok, Instagram и YouTube' };
+}
+
+function enqueueDownload(chatId, url) {
+	const now = Date.now();
+	if (userCooldown.has(chatId) && now - userCooldown.get(chatId) < 30000) {
+		return { ok: false, status: 429, error: 'Подождите 30 секунд перед следующим запросом' };
+	}
+
+	const detected = detectPlatform(url);
+	if (detected.error) return { ok: false, status: 400, error: detected.error };
+
+	userCooldown.set(chatId, now);
+	queue.push({ chatId, url, platform: detected.platform });
+	const position = queue.length;
+	processQueue();
+	return { ok: true, platform: detected.platform, position };
+}
+
 bot.on('message', async msg => {
 	const chatId = msg.chat.id;
 	if (!msg.text || msg.text.startsWith('/')) return;
 
 	const url = msg.text.trim();
-	const now = Date.now();
-	if (userCooldown.has(chatId) && now - userCooldown.get(chatId) < 30000) {
-		return bot.sendMessage(
-			chatId,
-			'Пожалуйста, подождите 30 секунд перед следующим запросом ⏳'
-		);
+	const result = enqueueDownload(chatId, url);
+	if (!result.ok) return bot.sendMessage(chatId, `${result.error} ❌`);
+
+	console.log(`[${new Date().toISOString()}] ${chatId} -> ${url} (${result.platform})`);
+});
+
+function hasValidApiSecret(req) {
+	const expected = process.env.API_SECRET;
+	if (!expected) return false;
+	const authorization = req.get('authorization') || '';
+	const actual = authorization.startsWith('Bearer ')
+		? authorization.slice(7)
+		: req.get('x-api-key') || '';
+	const expectedBuffer = Buffer.from(expected);
+	const actualBuffer = Buffer.from(actual);
+	return (
+		expectedBuffer.length === actualBuffer.length &&
+		crypto.timingSafeEqual(expectedBuffer, actualBuffer)
+	);
+}
+
+app.get('/', (req, res) => {
+	res.json({ status: 'ok', mode: WEBHOOK_URL ? 'webhook' : 'polling' });
+});
+
+app.post(WEBHOOK_PATH, (req, res) => {
+	if (!WEBHOOK_URL) return res.sendStatus(404);
+	if (req.get('x-telegram-bot-api-secret-token') !== webhookSecret) {
+		return res.sendStatus(401);
 	}
 
-	let parsed;
+	res.sendStatus(200);
 	try {
-		parsed = new URL(url);
-	} catch {
-		return bot.sendMessage(chatId, 'Это не ссылка ❌');
+		bot.processUpdate(req.body);
+	} catch (error) {
+		console.error('Ошибка Telegram webhook:', error);
+	}
+});
+
+app.post('/download', (req, res) => {
+	if (!process.env.API_SECRET) {
+		return res.status(503).json({ error: 'API_SECRET не настроен' });
+	}
+	if (!hasValidApiSecret(req)) {
+		return res.status(401).json({ error: 'Неверный API_SECRET' });
 	}
 
-	const host = parsed.hostname.toLowerCase();
-	let platform;
-	if (host === 'tiktok.com' || host.endsWith('.tiktok.com')) {
-		platform = 'tiktok';
-	} else if (host === 'instagram.com' || host.endsWith('.instagram.com')) {
-		platform = 'instagram';
-	} else if (
-		host === 'youtube.com' ||
-		host.endsWith('.youtube.com') ||
-		host === 'youtu.be'
-	) {
-		platform = 'youtube';
-	} else {
-		return bot.sendMessage(chatId, 'Поддерживаются только TikTok, Instagram и YouTube ❌');
+	const { chatId, url } = req.body || {};
+	if (!['string', 'number'].includes(typeof chatId) || typeof url !== 'string') {
+		return res.status(400).json({ error: 'Нужны поля chatId и url' });
 	}
 
-	console.log(`[${new Date().toISOString()}] ${chatId} -> ${url} (${platform})`);
-	queue.push({ chatId, url, platform });
-	processQueue();
+	const result = enqueueDownload(chatId, url.trim());
+	if (!result.ok) return res.status(result.status).json({ error: result.error });
+	console.log(`[${new Date().toISOString()}] API ${chatId} -> ${url} (${result.platform})`);
+	return res.status(202).json({
+		status: 'queued',
+		platform: result.platform,
+		position: result.position,
+	});
+});
+
+app.listen(PORT, '0.0.0.0', async () => {
+	console.log(`Web server listening on ${PORT}`);
+	if (!WEBHOOK_URL) {
+		console.log('Telegram работает через polling (для локального запуска).');
+		return;
+	}
+
+	try {
+		const url = `${WEBHOOK_URL}${WEBHOOK_PATH}`;
+		await bot.setWebHook(url, {
+			secret_token: webhookSecret,
+			allowed_updates: JSON.stringify(['message']),
+		});
+		console.log(`Telegram webhook установлен: ${url}`);
+	} catch (error) {
+		console.error('Не удалось установить Telegram webhook:', error);
+	}
 });

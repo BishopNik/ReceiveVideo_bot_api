@@ -23,6 +23,33 @@ git clone https://github.com/BishopNik/ReceiveVideo_bot_api.git
 
 npm start
 
+Локально бот использует polling. На Render добавьте переменные окружения:
+
+- `BOT_TOKEN` — токен Telegram-бота;
+- `WEBHOOK_URL` — публичный адрес сервиса без завершающего слеша, например
+  `https://receivevideo-bot-api.onrender.com`;
+- `API_SECRET` — случайный секрет для защищённого `POST /download`;
+- `TELEGRAM_WEBHOOK_SECRET` — необязательный случайный секрет из латинских
+  букв, цифр, `_` и `-`. Если его нет, приложение создаёт стабильный секрет
+  из `BOT_TOKEN`.
+
+При наличии `WEBHOOK_URL` Telegram отправляет сообщения на webhook. Входящий
+HTTP-запрос будит бесплатный сервис Render после периода простоя.
+
+## API
+
+Поставить видео в очередь и после обработки отправить его в Telegram:
+
+```bash
+curl -X POST https://receivevideo-bot-api.onrender.com/download \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer YOUR_API_SECRET' \
+  -d '{"chatId":817787848,"url":"https://www.instagram.com/reel/EXAMPLE/"}'
+```
+
+Успешный запрос возвращает HTTP `202`. Пользователь или чат должны ранее
+разрешить боту отправлять сообщения.
+
 Bot ReceiveVideo Клікніть /start
 
 ## Основні функції
